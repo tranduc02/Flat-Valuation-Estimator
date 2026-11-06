@@ -1,0 +1,11 @@
+# Never commit the team key, the supplied files, or API output (hackathon rules).
+.env
+data/
+cache/
+out/
+
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store

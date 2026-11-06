@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- EDIT THIS FILE, then run `python run.py report` to produce report.html.
+     Double-brace placeholders are filled from the backtest; replace every "todo" span with your own words. -->
+<title>Valuing every City of Sydney flat</title>
+<style>
+  :root { --ink:#1f2933; --muted:#616e7c; --line:#e4e7eb; --accent:#2f6fdb; --soft:#f5f7fa; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #fff; color: var(--ink);
+         font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 40px 16px 64px; }
+  h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 12px; }
+  h2 { font-size: 1.3rem; margin: 40px 0 8px; padding-top: 16px; border-top: 1px solid var(--line); }
+  p, li { max-width: 68ch; }
+  .lede { font-size: 1.15rem; color: var(--muted); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 20px 0; }
+  .stat { background: var(--soft); border-radius: 8px; padding: 14px 16px; }
+  .stat b { display: block; font-size: 1.6rem; color: var(--accent); }
+  .stat span { color: var(--muted); font-size: .9rem; }
+  img { max-width: 100%; height: auto; display: block; margin: 12px 0; }
+  table { border-collapse: collapse; margin: 12px 0; }
+  td, th { border-bottom: 1px solid var(--line); padding: 6px 16px 6px 0; text-align: left; }
+  .flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 16px 0; }
+  .flow div { background: var(--soft); border-radius: 6px; padding: 8px 12px; font-size: .95rem; }
+  .flow i { color: var(--muted); font-style: normal; }
+  .todo { background: #fff3c4; border-radius: 3px; padding: 0 3px; }
+  footer { margin-top: 48px; color: var(--muted); font-size: .85rem; }
+</style>
+</head>
+<body>
+<main>
+
+<h1><span class="todo">TODO headline finding, e.g. "In the City of Sydney, each floor up adds about X% to a flat's value"</span></h1>
+<p class="lede">We estimated a 31 August 2026 sale value for all {{n_flats}} supplied City of Sydney addresses.
+On {{n_test}} later sales we held out, {{within_share}} of our estimates were within 10% of the sale price.</p>
+
+<div class="stats">
+  <div class="stat"><b>{{within_share}}</b><span>within 10% ({{within_n}} of {{n_test}} later sales)</span></div>
+  <div class="stat"><b>{{median_abs_error}}</b><span>typical (median) miss</span></div>
+  <div class="stat"><b>{{r2}}</b><span>R squared on sale prices</span></div>
+</div>
+
+<h2>What we found along the way</h2>
+<ul>
+  <li><span class="todo">TODO finding with a number, e.g. the floor premium, the building effect, the harbour premium.</span></li>
+  <li>A flat's own earlier sale, moved to today's prices with a repeat-sales index, was a strong guide:
+      flats that had sold before were within 10% {{sold_before_share}} of the time ({{sold_before_n}} sales),
+      against {{never_sold_share}} for flats with no earlier sale ({{never_sold_n}} sales).</li>
+  <li><span class="todo">TODO something that surprised you, or that did not work.</span></li>
+</ul>
+
+<h2>How accurate is it on later sales?</h2>
+<p>We built the estimate only from sales dated before <b>{{split_date}}</b>, then valued flats as at that date and
+compared with <b>{{n_test}}</b> flat sales under $1.2 million from {{split_date}} to {{test_end}}, which the model never saw.
+Missing predictions: <b>{{n_missing}}</b>. R squared: <b>{{r2}}</b>.</p>
+{{chart_compare}}
+<p>The two grey bars are the simple benchmarks from the task page, rebuilt on the same split:
+a suburb median for each bedroom count ({{base_median_share}} within 10%) and each flat's last sale adjusted for
+city-wide price changes ({{base_last_share}}).</p>
+{{chart_bands}}
+<table><tr><th>Miss</th><th>Later sales</th></tr>{{bands_table}}</table>
+{{chart_scatter}}
+
+<h2>What data did we use?</h2>
+<ul>
+  <li>The supplied <code>flats-city-of-sydney.csv</code> ({{n_flats}} addresses: location, mesh block, unit number,
+      bedrooms where known, flats in the building) and <code>flat-sales-city-of-sydney.csv</code>
+      ({{n_train_final}} sales used for the final model).</li>
+  <li><span class="todo">TODO any API data (e.g. floor from /v1/suburbs/{suburb}/properties) or open data you added.</span></li>
+  <li>Only information dated by 31 August 2026. Sales after that date were removed before anything else ran.</li>
+</ul>
+
+<h2>How did we estimate value?</h2>
+<div class="flow">
+  <div>Repeat sales</div><i>&rarr;</i><div>City price index</div><i>&rarr;</i>
+  <div>Earlier sales of the flat, building, mesh block</div><i>&rarr;</i><div>Gradient-boosted model</div><i>&rarr;</i>
+  <div>Value on 31 Aug 2026</div>
+</div>
+<ol>
+  <li><b>Price index.</b> Flats that sold twice show how prices moved between the two dates. We fitted a smoothed
+      quarterly index from those pairs and used it to move every past sale to a common price level.</li>
+  <li><b>Comparable history.</b> For each flat we took the index-adjusted prices of earlier sales of the same flat,
+      the same building (and same bedroom count), the same mesh block, and the same suburb and bedroom count.
+      Training rows only see sales before their own date, so the model learns exactly what it can use on 31 August.</li>
+  <li><b>Flat details.</b> Floor (from the unit number), position in the building, bedrooms, bathrooms, parking,
+      building size, distance to the harbour and to Town Hall.</li>
+  <li><b>Model.</b> LightGBM with a median (L1) loss on log prices, so it targets percentage error, which is what the
+      within-10% score rewards. Recent sales count more (four-year half-life).</li>
+</ol>
+{{chart_importance}}
+{{chart_index}}
+<p><span class="todo">TODO the clever step, in one or two sentences, and why it helps.</span></p>
+
+<h2>What remains uncertain?</h2>
+<ul>
+  <li>Bedrooms are blank for most addresses, and those that exist come from the last advert, which may be dated after 31 August.</li>
+  <li>The model does not see condition, renovation, aspect or view directly.</li>
+  <li><span class="todo">TODO where it misses most (e.g. large or penthouse flats, small blocks with no sales).</span></li>
+</ul>
+
+<footer>
+  Data &copy; Microburbs; estimates are automated and indicative only. Addresses from G-NAF &copy; Geoscape Australia.
+  Mesh blocks &copy; Australian Bureau of Statistics (CC BY 4.0). <span class="todo">TODO credit any other source.</span>
+</footer>
+</main>
+</body>
+</html>
