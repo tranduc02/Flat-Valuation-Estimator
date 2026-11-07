@@ -8,6 +8,7 @@
     python run.py backtest       # train before SPLIT_DATE, score on later sales
     python run.py ablation       # backtest score as each group of inputs is added (slower)
     python run.py calibrate      # do estimates run high or low on earlier windows? suggests PRICE_ADJUST
+    python run.py evaluate       # within 10% on four separate test periods (judge any change on this)
     python run.py predict       # final model -> valuation_<team>.csv (then validates it)
     python run.py validate       # check the CSV against the hand-in rules
     python run.py report         # report_template.html -> report.html
@@ -25,7 +26,8 @@ import config
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=["check-api", "inspect", "fetch-api", "fetch-osm", "build-vg", "backtest",
-                                            "ablation", "calibrate", "predict", "validate", "report", "fake-data"])
+                                            "ablation", "calibrate", "evaluate", "predict", "validate", "report",
+                                            "fake-data"])
     parser.add_argument("--data-dir", type=Path, default=config.DATA_DIR)
     parser.add_argument("--team", default=config.TEAM_NAME, help="team name (default: config.TEAM_NAME)")
     args = parser.parse_args()
@@ -47,6 +49,8 @@ def main():
         pipeline.ablation(args.data_dir)
     elif args.command == "calibrate":
         pipeline.calibration(args.data_dir)
+    elif args.command == "evaluate":
+        pipeline.evaluate(args.data_dir)
     elif args.command == "predict":
         if args.team == "your team name":
             sys.exit("Set TEAM_NAME in config.py (or pass --team) first: it names the CSV.")

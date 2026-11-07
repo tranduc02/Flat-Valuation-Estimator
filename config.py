@@ -77,3 +77,4 @@ LGBM_PARAMS = dict(
 MAX_ROUNDS = 5000
 EARLY_STOPPING_ROUNDS = 200
 SEED = 42
+N_MODELS = 3  # refit this many times with different seeds and average (1 = a single model)

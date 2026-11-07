@@ -59,6 +59,13 @@ def add_address_parts(flats: pd.DataFrame) -> pd.DataFrame:
     # that also works for small blocks numbered 1, 2, 3...
     flats["unit_rank"] = flats.groupby("building")["unit_num"].rank(pct=True)
 
+    # Stack: in buildings numbered by floor, units with the same last two digits (305, 405, 505)
+    # sit above each other and usually share a floor plan.
+    in_stack = numbered_by_floor & level.isna()
+    flats["stack"] = pd.Series(pd.NA, index=flats.index, dtype="object")
+    flats.loc[in_stack, "stack"] = (flats.loc[in_stack, "building"] + "|"
+                                    + (flats.loc[in_stack, "unit_num"] % 100).astype(int).astype(str))
+
     upper = flats["address"].str.upper()
     flats["is_shop"] = upper.str.contains(r"\bSHOP\b", regex=True)
     flats["is_office"] = upper.str.contains(r"\b(?:OFFICE|SUITE)\b", regex=True)

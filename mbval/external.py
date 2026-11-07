@@ -325,11 +325,16 @@ def load_vg_sales(supplied: pd.DataFrame) -> pd.DataFrame | None:
 
 
 def vg_area(flats: pd.DataFrame) -> pd.DataFrame | None:
-    """Strata lot area from VG sales, where it looks like one flat's area (under 500 m2)."""
+    """Strata lot area from VG sales, where it looks like one flat's area (under 500 m2), plus the
+    median area of the flat's stack (same floor plan on other floors), which roughly doubles coverage."""
     if not VG_SALES.exists():
         return None
     vg = pd.read_csv(VG_SALES, dtype={"gnaf_id": str})
     a = vg[vg["area_m2"].between(15, 500)].groupby("gnaf_id")["area_m2"].median()
     if a.empty:
         return None
-    return a.rename("vg_lot_area_m2").reset_index()
+    out = flats[["gnaf_id"]].assign(vg_lot_area_m2=flats["gnaf_id"].map(a))
+    if "stack" in flats:
+        known = out.assign(stack=flats["stack"]).dropna(subset=["stack", "vg_lot_area_m2"])
+        out["vg_stack_area_m2"] = flats["stack"].map(known.groupby("stack")["vg_lot_area_m2"].median())
+    return out[out.drop(columns="gnaf_id").notna().any(axis=1)]

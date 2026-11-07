@@ -188,14 +188,22 @@ def build_values() -> dict:
         if preds_file.exists():
             v["chart_scatter"] = chart_scatter(pd.read_csv(preds_file))
     v["calibration_sentence"] = ""
+    text = ""
+    efile = config.OUT_DIR / "evaluate.json"
+    if efile.exists():
+        ev = pd.DataFrame(json.loads(efile.read_text()))
+        ev = ev[ev["model"] == ev["model"].iloc[-1]]  # the final setup (average of N models)
+        parts = ", ".join(f"{_pct(r.within_10_share)} of {r.n:,} ({r.window})" for r in ev.itertuples())
+        text = (f"Four separate tests: we repeated the exercise from 1 October 2025, 1 January, 1 April and "
+                f"1 July 2026, each time training only on earlier sales and valuing the following months' flat "
+                f"sales under $1.2 million. Within 10%: {parts}; {ev['within_10_n'].sum():,} of "
+                f"{ev['n'].sum():,} overall ({ev['within_10_n'].sum() / ev['n'].sum():.1%}).")
     cfile = config.OUT_DIR / "calibration.json"
     if cfile.exists():
         c = json.loads(cfile.read_text())
         ratios = ", ".join(f"{(w['median_ratio'] - 1):+.1%}" for w in c["windows"])
-        shares = ", ".join(f"{_pct(w['within_10_share'])} of {w['n']:,}" for w in c["windows"])
-        text = (f"Three more tests: we repeated the exercise from 1 October 2025, 1 January and 1 April 2026, "
-                f"each time training only on earlier sales and valuing the next three months of flat sales "
-                f"under $1.2 million. Within 10%: {shares}. The typical estimate was off by {ratios}.")
+        text += (f" We also checked whether estimates run high or low on the three earlier windows: the "
+                 f"typical estimate was off by {ratios}.")
         if config.PRICE_ADJUST != 1.0:
             text += f" So every estimate is multiplied by {config.PRICE_ADJUST:.3f}"
             chk = c.get("check")
@@ -205,7 +213,7 @@ def build_values() -> dict:
             text += "."
         else:
             text += " That was not consistent enough to correct for, so estimates are not rescaled."
-        v["calibration_sentence"] = text
+    v["calibration_sentence"] = text
     afile = config.OUT_DIR / "ablation.json"
     if afile.exists():
         v["ablation_table"] = ablation_table(json.loads(afile.read_text()))

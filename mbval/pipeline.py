@@ -43,6 +43,8 @@ def load_inputs(data_dir: Path):
     flats = data.load_flats(data_dir)
     sales = data.load_sales(data_dir).assign(source="supplied", available_date=pd.NaT)
     vg = external.load_vg_sales(sales)
+    if vg is not None:
+        vg = vg[vg["gnaf_id"].isin(flats["gnaf_id"])]
     if vg is not None and len(vg):
         sales = (pd.concat([sales, vg.assign(source="vg")], ignore_index=True)
                  .sort_values("sale_date").reset_index(drop=True))
@@ -276,6 +278,7 @@ def backtest(data_dir: Path) -> dict:
 def ablation(data_dir: Path) -> list[dict]:
     """Backtest score as each group of history features is added (for the report's
     'what worked' table). Features are built once; only the model is refit per step."""
+    config.N_MODELS = 1  # one model per step keeps this affordable; the steps compare like with like
     flats, sales, static = load_inputs(data_dir)
     test = test_sales(sales, static)
     p = prepare(sales[sales["source"] == "supplied"], static, config.SPLIT_DATE)
@@ -341,6 +344,37 @@ def calibration(data_dir: Path) -> dict:
     config.OUT_DIR.mkdir(exist_ok=True)
     (config.OUT_DIR / "calibration.json").write_text(json.dumps(result, indent=2))
     return result
+
+
+def evaluate(data_dir: Path) -> list[dict]:
+    """Within 10% on four separate periods (the three calibration windows and the July-August
+    backtest), for one model and for the average of N_MODELS. Use it to judge a change: one
+    283-sale test is too noisy on its own."""
+    flats, sales, static = load_inputs(data_dir)
+    windows = [(pd.Timestamp(s), pd.Timestamp(s) + pd.DateOffset(months=3) - pd.Timedelta(days=1))
+               for s in config.CALIBRATION_SPLITS]
+    windows.append((pd.Timestamp(config.SPLIT_DATE), pd.Timestamp(config.VALUATION_DATE)))
+    rows = []
+    for start, end in windows:
+        fitted = fit(sales, static, start)
+        test = test_sales(sales, static, start=start, end=end)
+        x, level = value_features(fitted.hist, fitted.index, fitted.as_of, static, test["gnaf_id"])
+        for label, members in (("one model", 1), (f"average of {len(fitted.model.boosters)}", None)):
+            pred = np.exp(fitted.model.predict(x, members) + level) * config.PRICE_ADJUST
+            s = metrics.summarize(test["price"], pred)
+            rows.append({"window": f"{start.date()} to {end.date()}", "model": label, "n": s["n"],
+                         "within_10_n": s["within_10_n"], "within_10_share": s["within_10_share"],
+                         "median_abs_error": s["median_abs_error"]})
+            print(f"  {start.date()} to {end.date()}  {label:<14} {metrics.fmt(s)}", flush=True)
+    df = pd.DataFrame(rows)
+    print("\nall four periods together:")
+    for label, g in df.groupby("model", sort=False):
+        print(f"  {label:<14} within 10%: {g['within_10_n'].sum():,} of {g['n'].sum():,} "
+              f"({g['within_10_n'].sum() / g['n'].sum():.1%}), mean of period shares "
+              f"{g['within_10_share'].mean():.1%}, mean median miss ${g['median_abs_error'].mean():,.0f}")
+    config.OUT_DIR.mkdir(exist_ok=True)
+    (config.OUT_DIR / "evaluate.json").write_text(json.dumps(rows, indent=2))
+    return rows
 
 
 def team_slug(name: str) -> str:

@@ -37,6 +37,7 @@ HISTORY_GROUPS = [
     ("bldbed", ["building", "bed_key"]),
     ("mb", ["mb"]),
     ("subbed", ["suburb", "bed_key"]),
+    ("stk", ["stack"]),  # same floor plan: 305, 405, 505... in the same building
 ]
 NEARBY_BUILDINGS = 8
 
@@ -47,6 +48,7 @@ ABLATION_STEPS = [
     ("+ earlier sales in the same building", ["bld_", "bldbed_"]),
     ("+ mesh block and suburb sales", ["mb_", "subbed_"]),
     ("+ nearby buildings", ["nbr_"]),
+    ("+ same floor plan on other floors", ["stk_"]),
     ("+ mesh block homes and people (supplied)", ["blk_"]),
     ("+ Microburbs API property and dwelling type", ["api_"]),
     ("+ OpenStreetMap buildings and stations", ["osm_"]),
@@ -76,8 +78,12 @@ def static_features(flats: pd.DataFrame, api_extras: pd.DataFrame | None = None)
     for col in STATIC_CATEGORICAL:
         f[col] = f[col].fillna("unknown").astype(str) if col in f else "unknown"
     f["mb"] = f["mb"].fillna("unknown").astype(str) if "mb" in f else "unknown"
+    stack = f["stack"] if "stack" in f else pd.Series(pd.NA, index=f.index, dtype="object")
+    f["has_stack"] = stack.notna()
+    f["stack"] = stack.fillna("solo|" + f["gnaf_id"].astype(str))  # no stack: only matches itself
 
-    keep = ["gnaf_id", "building", "bed_key", "mb", "is_nonres"] + STATIC_NUMERIC + STATIC_CATEGORICAL
+    keep = (["gnaf_id", "building", "bed_key", "mb", "is_nonres", "stack", "has_stack"]
+            + STATIC_NUMERIC + STATIC_CATEGORICAL)
     out = f[keep]
     if api_extras is not None:
         out = out.merge(api_extras, on="gnaf_id", how="left")
@@ -101,10 +107,14 @@ def history_features(query: pd.DataFrame, hist: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=query.index)
 
     for prefix, keys in HISTORY_GROUPS:
-        h = h_all[keys + ["sale_date", "lp_norm"]].copy()
+        extra = ["floor"] if prefix == "stk" and "floor" in h_all else []
+        h = h_all[keys + ["sale_date", "lp_norm"] + extra].copy()
         g = h.groupby(keys, sort=False)["lp_norm"]
         h[f"{prefix}_n"] = g.cumcount() + 1
         h[f"{prefix}_mean"] = g.cumsum() / h[f"{prefix}_n"]
+        if extra:  # average floor of those earlier sales, to compare with the flat's own floor
+            h[f"{prefix}_mean_floor"] = h.groupby(keys, sort=False)["floor"].cumsum() / h[f"{prefix}_n"]
+            h = h.drop(columns="floor")
         h = h.rename(columns={"lp_norm": f"{prefix}_last", "sale_date": f"{prefix}_last_date"})
         m = pd.merge_asof(
             q_sorted[keys + ["query_date", "_row"]], h,
@@ -115,6 +125,9 @@ def history_features(query: pd.DataFrame, hist: pd.DataFrame) -> pd.DataFrame:
         out[f"{prefix}_mean"] = m[f"{prefix}_mean"].to_numpy()
         out[f"{prefix}_last"] = m[f"{prefix}_last"].to_numpy()
         out[f"{prefix}_last_age_yrs"] = ((m["query_date"] - m[f"{prefix}_last_date"]).dt.days / 365.25).to_numpy()
+        if f"{prefix}_mean_floor" in m:
+            out[f"{prefix}_floor_gap"] = (query["floor"].to_numpy() - m[f"{prefix}_mean_floor"].to_numpy()
+                                          if "floor" in query else np.nan)
     return out
 
 
@@ -169,8 +182,14 @@ def feature_frame(query: pd.DataFrame, hist: pd.DataFrame, static: pd.DataFrame)
     q = q.join(static, on="gnaf_id")
     hist = hist[["gnaf_id", "sale_date", "lp_norm"]].copy()
     hist["sale_date"] = hist["sale_date"].astype("datetime64[ns]")
-    hist = hist.join(static[["building", "bed_key", "mb", "suburb"]], on="gnaf_id", how="inner")
-    x = pd.concat([q[names], history_features(q, hist), neighbour_features(q, hist, static)], axis=1)
+    hist = hist.join(static[["building", "bed_key", "mb", "suburb", "stack", "floor"]], on="gnaf_id", how="inner")
+    hf = history_features(q, hist)
+    solo = ~q["has_stack"].fillna(False).to_numpy(dtype=bool)  # no stack: stk_ would repeat own_, so blank it
+    stk = [c for c in hf.columns if c.startswith("stk_")]
+    hf.loc[solo, stk] = np.nan
+    if "stk_n" in hf:
+        hf.loc[solo, "stk_n"] = 0
+    x = pd.concat([q[names], hf, neighbour_features(q, hist, static)], axis=1)
     x["t_years"] = q["query_date"].dt.year + q["query_date"].dt.dayofyear / 366
     for col in STATIC_CATEGORICAL + [c for c in names if c not in STATIC_CATEGORICAL
                                      and not pd.api.types.is_numeric_dtype(x[c])]:

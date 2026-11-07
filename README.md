@@ -3,9 +3,7 @@
 Valuing every City of Sydney flat · Microburbs Hackathon, 7 November 2026 ·
 [Task 5: *Value every flat*](https://www.microburbs.com.au/p/hackathon-task-valuation)
 
-> **TODO (team):** one-paragraph pitch: what we built and the headline result, e.g.
-> "We valued all 181,711 City of Sydney addresses as at 31 August 2026. On N later sales we held out, X% of our
-> estimates were within 10% of the sale price, against Y% for an index-adjusted last sale."
+We put a 31 August 2026 sale value on all 181,711 City of Sydney addresses, using only information available by that day. To check it honestly, we rebuilt everything as at 1 July and valued the 283 flats that sold under $1.2 million in July and August. 67.8% of our estimates were within 10% of the sale price (typical miss $47,976, R² 0.73), against 50.2% for the task page's best simple method on the same sales. Repeating the test from three earlier start dates gave 70.8% across 1,838 later sales in all.
 
 ## What we built
 
@@ -20,21 +18,15 @@ median by bedrooms) and 109 (each flat's last sale, index-adjusted).
 
 ## Who it helps
 
-- **Buyers and sellers:** a price they can check before negotiating, for any flat in the city, including ones
-  that have never been advertised.
-- **Landlords and everyday investors:** what each flat they own or are watching might sell for.
-
-> **TODO (team):** reword in your own voice; add a concrete example once you have one.
+- Buyers. Before you bid on a flat, you can see roughly what it's worth, even if it hasn't been on the market for ten years. For example, a one-bedroom in Waterloo sold for $697,000 on 1 July, and we had valued it at $702,000 using only sales from before that day.
+Sellers and owners. A sanity check on an agent's price guide, for any flat in the city.
+Lenders and data providers. The task page says Microburbs' own valuation covers 13% of addresses. This covers every one, and comes with a time-honest backtest showing how far to trust it.
 
 ## The clever step
 
-> **TODO (team):** the one non-obvious idea that moved the score, and by how much. Candidates the pipeline already has:
-> - **Moving every past sale to today's prices** with a repeat-sales index, so a 2015 sale of the same flat or the
->   flat next door becomes a usable comparable.
-> - **Time-honest training:** each training sale only sees sales before its own date, exactly as a 31 August
->   valuation would, so the model doesn't learn to lean on information it won't have.
-> - **Floor and position in the building** parsed from the unit number (315 → floor 3), and a within-building
->   floor premium (each floor up vs. flats in the same building) reported by the backtest.
+Finding the missing 42% of the sales history. The supplied sales file turned out to be a subset of the NSW Valuer General's public sales records: same dates, same prices. We matched the Valuer General's unit sales to G-NAF addresses (unit, street number, street, suburb). That added 34,375 sales the supplied file didn't have (81,319 in all) and a strata lot area, which is close to floor area, for 15,736 flats. The model leans hardest on earlier sales in the same building with the same bedroom count (about 39% of its total gain), and the extra sales fill exactly those gaps.
+
+To keep it within the rules, we read only weekly files released by 31 August. In the backtest, a Valuer General sale only counts once it had been registered. Adding the Valuer General data took the backtest from [ABL] 64.3% to 67.8% within 10% and cut the typical miss from [ABL] $50,537 to $45,473.
 
 ## The data
 
@@ -60,8 +52,9 @@ are gitignored. The backtest is scored on supplied sales only, so it stays compa
 1. **Price index.** Flats that sold twice give the price change between two dates. A smoothed quarterly
    repeat-sales index (Bailey-Muth-Nourse least squares) turns every past sale into today's price level.
 2. **Comparable history.** For each flat: count, mean and latest index-adjusted log price of earlier sales of the
-   same flat, the same building, the same building and bedroom count, the same mesh block, the same suburb and
-   bedroom count, and the eight nearest other buildings with sales (one search tree per month, so it stays
+   same flat, the same building, the same building and bedroom count, the same floor plan on other floors
+   ("stack": units 305, 405, 505... share a layout; we also track how many floors away those sales were),
+   the same mesh block, the same suburb and bedroom count, and the eight nearest other buildings with sales (one search tree per month, so it stays
    time-honest).
 3. **Flat details.** Floor, position in the building, bedrooms, bathrooms, parking, building size, distance to the
    harbour and to Town Hall, suburb, block type, shop/office/car space flags, strata lot area (Valuer General),
@@ -70,7 +63,12 @@ are gitignored. The backtest is scored on supplied sales only, so it stays compa
    height is its floor x 3.1 m; we count taller buildings within 100 m, how far the tallest rises above the flat,
    and taller buildings within 250 m in a 60° cone towards the nearest harbour point. Plus distance to stations.
 5. **Model.** LightGBM with an L1 loss on index-adjusted log price (targets percentage error, which is what the
-   within-10% score rewards), recent sales weighted more. Value = model output moved to the 31 August index level.
+   within-10% score rewards), recent sales weighted more, three seeds averaged. Value = model output moved to the
+   31 August index level.
+
+**Testing.** Besides the main backtest (train before 1 July, test July-August), `run.py evaluate` repeats it from
+1 October 2025, 1 January and 1 April 2026, each trained only on earlier sales. We kept a change only if it helped
+across all four periods; `run.py calibrate` checked for a consistent high or low bias (there wasn't one).
 
 ## How to run it
 
@@ -91,6 +89,8 @@ python run.py fetch-osm   # OpenStreetMap buildings and stations -> data/externa
 python run.py build-vg    # match Valuer General zips in data/external/vg/ to gnaf_id -> data/external/vg_sales.csv
 python run.py backtest    # train before SPLIT_DATE, score on later sales -> out/backtest_metrics.json
 python run.py ablation    # score as each group of inputs is added -> out/ablation.json (slower)
+python run.py evaluate    # within 10% on four separate test periods -> out/evaluate.json (slower)
+python run.py calibrate   # do estimates run high or low on earlier periods? -> out/calibration.json
 python run.py predict     # final model -> valuation_<team>.csv, then validates it
 python run.py report      # report_template.html -> report.html
 ```

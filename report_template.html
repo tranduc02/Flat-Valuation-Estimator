@@ -33,7 +33,7 @@
 <body>
 <main>
 
-<h1><span class="todo">TODO headline finding, e.g. "In the City of Sydney, each floor up adds about X% to a flat's value"</span></h1>
+<h1>Every City of Sydney flat valued: {{within_share}} within 10% of the later sale price</h1>
 <p class="lede">We estimated a 31 August 2026 sale value for all {{n_flats}} supplied City of Sydney addresses.
 On {{n_test}} later sales we held out, {{within_share}} of our estimates were within 10% of the sale price.</p>
 
@@ -52,7 +52,13 @@ On {{n_test}} later sales we held out, {{within_share}} of our estimates were wi
   <li>A flat's own earlier sale, moved to today's prices with a repeat-sales index, was a strong guide:
       flats that had sold before were within 10% {{sold_before_share}} of the time ({{sold_before_n}} sales),
       against {{never_sold_share}} for flats with no earlier sale ({{never_sold_n}} sales).</li>
-  <li><span class="todo">TODO something that surprised you, or that did not work.</span></li>
+  <li><b>Half the floor premium is bigger flats.</b> Within the same building, each floor up sold for about
+    1.3% more, but comparing only flats with the same number of bedrooms the gap falls to 0.7% a floor
+    (25,596 sales). Higher floors tend to have more bedrooms.</li>
+<li><b>Light and view didn't show up.</b> Counting the taller buildings around each flat, and between it and
+    the harbour, using OpenStreetMap heights, moved the backtest from [ABL] 66.4% to 64.3% within 10%. That is
+    within the noise, so it's not proof it hurts, but no gain either. One height per building, on today's map,
+    is probably too coarse to see one flat's view.</li>
 </ul>
 
 <h2>How accurate is it on later sales?</h2>
@@ -74,7 +80,11 @@ private set: {{published_benchmarks}}.</p>
 <p>The same backtest, refitting the model as each group of inputs is added. With a test set this size, differences
 under about 5 percentage points may be noise.</p>
 {{ablation_table}}
-<p><span class="todo">TODO one sentence on what moved the score most, and anything that did not help.</span></p>
+<p>The extra 34,000 sales from the NSW Valuer General moved the score most: 3.5 points, to 68.2%. It was the only
+step bigger than the noise on 283 sales, and it cut the median miss by about $4,000. A flat's own earlier sales and
+its building's sales came next. Nearby buildings, the API's dwelling types and the OpenStreetMap light-and-view
+counts did not measurably move this single test. The floor-plan inputs helped only slightly, but in all four test
+periods of our wider check, which is why we kept them.</p>
 
 <h2>What data did we use?</h2>
 <ul>
@@ -108,7 +118,8 @@ under about 5 percentage points may be noise.</p>
   <li><b>Price index.</b> Flats that sold twice show how prices moved between the two dates. We fitted a smoothed
       quarterly index from those pairs and used it to move every past sale to a common price level.</li>
   <li><b>Comparable history.</b> For each flat we took the index-adjusted prices of earlier sales of the same flat,
-      the same building (and same bedroom count), the same mesh block, the same suburb and bedroom count, and the
+      the same building (and same bedroom count), the same floor plan on other floors (units 305, 405, 505... sit
+      above each other and usually share a layout), the same mesh block, the same suburb and bedroom count, and the
       eight nearest other buildings with sales.
       Training rows only see sales before their own date, so the model learns exactly what it can use on 31 August.</li>
   <li><b>Flat details.</b> Floor (from the unit number), position in the building, bedrooms, bathrooms, parking,
@@ -117,11 +128,15 @@ under about 5 percentage points may be noise.</p>
       how far the tallest rises above the flat, and the taller buildings within 250 m in a 60&deg; cone towards the
       nearest point of the harbour.</li>
   <li><b>Model.</b> LightGBM with a median (L1) loss on log prices, so it targets percentage error, which is what the
-      within-10% score rewards. Recent sales count more (four-year half-life).</li>
+      within-10% score rewards. Recent sales count more (four-year half-life). We train three copies with
+      different random seeds and average them, which steadies the estimate.</li>
 </ol>
 {{chart_importance}}
 {{chart_index}}
-<p><span class="todo">TODO the clever step, in one or two sentences, and why it helps.</span></p>
+<p><b>The clever step: finding the missing sales.</b> The supplied sales were a subset of the NSW Valuer
+General's public records. Matching the Valuer General's unit sales to addresses added 34,375 sales (42% of what
+the final model learned from), mostly earlier sales in the same building with the same bedroom count, the
+input the model relies on most. Reading only files released by 31 August keeps it inside the rules.</p>
 
 <h2>What remains uncertain?</h2>
 <ul>
@@ -132,7 +147,11 @@ under about 5 percentage points may be noise.</p>
   <li>Strata lot area is only known for flats the Valuer General recorded an area for, and may include a car space
       or storage cage on the same lot.</li>
   <li>{{no_bld_sentence}}</li>
-  <li><span class="todo">TODO where it misses most (e.g. large or penthouse flats, small blocks with no sales).</span></li>
+  <li><b>Cheap flats, and small flats high up in towers.</b> Under $600,000 only 36% of estimates were within
+    10% (44 sales), against 81% between $600,000 and $800,000 (100 sales). Some of the worst misses were small
+    flats high up in city towers, such as a one-bedroom on level 18 in Haymarket that sold for $570,000 and we
+    valued at $809,000: the model gives them the building's and the floor's premium without knowing they are
+    small. When we miss, we usually guess too high (70 of 91 misses).</li>
 </ul>
 
 <footer>
