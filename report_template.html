@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- EDIT THIS FILE, then run `python run.py report` to produce report.html.
+     Double-brace placeholders are filled from the backtest; replace every "todo" span with your own words. -->
+<title>Valuing every City of Sydney flat</title>
+<style>
+  :root { --ink:#1f2933; --muted:#616e7c; --line:#e4e7eb; --accent:#2f6fdb; --soft:#f5f7fa; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #fff; color: var(--ink);
+         font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 40px 16px 64px; }
+  h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 12px; }
+  h2 { font-size: 1.3rem; margin: 40px 0 8px; padding-top: 16px; border-top: 1px solid var(--line); }
+  p, li { max-width: 68ch; }
+  .lede { font-size: 1.15rem; color: var(--muted); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 20px 0; }
+  .stat { background: var(--soft); border-radius: 8px; padding: 14px 16px; }
+  .stat b { display: block; font-size: 1.6rem; color: var(--accent); }
+  .stat span { color: var(--muted); font-size: .9rem; }
+  img { max-width: 100%; height: auto; display: block; margin: 12px 0; }
+  table { border-collapse: collapse; margin: 12px 0; }
+  td, th { border-bottom: 1px solid var(--line); padding: 6px 16px 6px 0; text-align: left; }
+  .flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 16px 0; }
+  .flow div { background: var(--soft); border-radius: 6px; padding: 8px 12px; font-size: .95rem; }
+  .flow i { color: var(--muted); font-style: normal; }
+  .todo { background: #fff3c4; border-radius: 3px; padding: 0 3px; }
+  footer { margin-top: 48px; color: var(--muted); font-size: .85rem; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Every City of Sydney flat valued: {{within_share}} within 10% of the later sale price</h1>
+<p class="lede">We estimated a 31 August 2026 sale value for all {{n_flats}} supplied City of Sydney addresses.
+On {{n_test}} later sales we held out, {{within_share}} of our estimates were within 10% of the sale price.</p>
+
+<div class="stats">
+  <div class="stat"><b>{{within_share}}</b><span>within 10% ({{within_n}} of {{n_test}} later sales)</span></div>
+  <div class="stat"><b>{{median_abs_error}}</b><span>typical (median) miss</span></div>
+  <div class="stat"><b>{{r2}}</b><span>R squared on sale prices</span></div>
+</div>
+
+<h2>What we found along the way</h2>
+<ul>
+  <li><b>{{floor_premium_pct}} a floor.</b> Compared only with flats in the same building, each floor up sold for
+      about {{floor_premium_pct}} more, after adjusting every sale to the same price level
+      ({{floor_premium_n}} sales in {{floor_premium_buildings}} buildings).
+      {{chart_floor}}</li>
+  <li>A flat's own earlier sale, moved to today's prices with a repeat-sales index, was a strong guide:
+      flats that had sold before were within 10% {{sold_before_share}} of the time ({{sold_before_n}} sales),
+      against {{never_sold_share}} for flats with no earlier sale ({{never_sold_n}} sales).</li>
+  <li><b>Half the floor premium is bigger flats.</b> Within the same building, each floor up sold for about
+    1.3% more, but comparing only flats with the same number of bedrooms the gap falls to 0.7% a floor
+    (25,596 sales). Higher floors tend to have more bedrooms.</li>
+<li><b>Light and view didn't show up.</b> Counting the taller buildings around each flat, and between it and
+    the harbour, using OpenStreetMap heights, moved the backtest from [ABL] 66.4% to 64.3% within 10%. That is
+    within the noise, so it's not proof it hurts, but no gain either. One height per building, on today's map,
+    is probably too coarse to see one flat's view.</li>
+</ul>
+
+<h2>How accurate is it on later sales?</h2>
+<p>We built the estimate only from sales dated before <b>{{split_date}}</b>, then valued flats as at that date and
+compared with <b>{{n_test}}</b> flat sales under $1.2 million from {{split_date}} to {{test_end}}, which the model never saw.
+Missing predictions: <b>{{n_missing}}</b>. R squared: <b>{{r2}}</b>.
+Without the $1.2 million cap ({{all_prices_n}} later sales), {{all_prices_share}} were within 10% and R squared was {{all_prices_r2}}.</p>
+<p>{{calibration_sentence}}</p>
+{{chart_compare}}
+<p>The two grey bars are the simple benchmarks from the task page, rebuilt on the same split:
+a suburb median for each bedroom count ({{base_median_share}} within 10%) and each flat's last sale adjusted for
+city-wide price changes ({{base_last_share}}). For reference, the task page gives these results on the judges'
+private set: {{published_benchmarks}}.</p>
+{{chart_bands}}
+<table><tr><th>Miss</th><th>Later sales</th></tr>{{bands_table}}</table>
+{{chart_scatter}}
+
+<h2>What did each input add?</h2>
+<p>The same backtest, refitting the model as each group of inputs is added. With a test set this size, differences
+under about 5 percentage points may be noise.</p>
+{{ablation_table}}
+<p>The extra 34,000 sales from the NSW Valuer General moved the score most: 3.5 points, to 68.2%. It was the only
+step bigger than the noise on 283 sales, and it cut the median miss by about $4,000. A flat's own earlier sales and
+its building's sales came next. Nearby buildings, the API's dwelling types and the OpenStreetMap light-and-view
+counts did not measurably move this single test. The floor-plan inputs helped only slightly, but in all four test
+periods of our wider check, which is why we kept them.</p>
+
+<h2>What data did we use?</h2>
+<ul>
+  <li>The supplied <code>flats-city-of-sydney.csv</code> ({{n_flats}} addresses: location, mesh block, unit number,
+      bedrooms where known, flats in the building), <code>flat-sales-city-of-sydney.csv</code>, and the supplied
+      homes and people per mesh block (2026 figures are Microburbs estimates, not Census results).</li>
+  <li><b>NSW Valuer General bulk sales.</b> The supplied sales turned out to be a subset of the state's sales
+      records (same dates, same prices). Matching the Valuer General's unit sales to addresses added
+      {{vg_sales_added}} sales the supplied file doesn't have, and the strata lot area (flat size) for
+      {{vg_area_n}} flats. The final model learned from {{n_train_final}} sales in all.</li>
+  <li><b>OpenStreetMap buildings and stations.</b> Building heights (where mapped, otherwise our own buildings' top
+      floor) give a building height for {{osm_height_share}} of flats, so we can count taller buildings next
+      to each flat and between it and the harbour. Stations give distance to train, metro and light rail.</li>
+  <li><b>Microburbs API.</b> Property type and dwelling type (apartment, unit, studio, commercial...) for almost
+      every address from <code>/v1/suburbs/{suburb}/properties</code>, and the floor where it gives one. Floor
+      otherwise comes from the unit number (315 is floor 3); where both exist they agreed on all 19,570 flats.
+      We skipped the API's bedrooms and parking, which carry no as-at date.</li>
+  <li>Only information dated by 31 August 2026. Sales after that date were removed before anything else ran, and
+      only Valuer General files released by 31 August were read (later ones hold the judges' test period).
+      In the backtest a Valuer General sale only counts once it had been registered.
+      We did not use current bedrooms and parking from <code>/basics/all</code>, which carry no as-at date.</li>
+</ul>
+
+<h2>How did we estimate value?</h2>
+<div class="flow">
+  <div>Repeat sales</div><i>&rarr;</i><div>City price index</div><i>&rarr;</i>
+  <div>Earlier sales of the flat, building, nearby buildings</div><i>&rarr;</i><div>Gradient-boosted model</div><i>&rarr;</i>
+  <div>Value on 31 Aug 2026</div>
+</div>
+<ol>
+  <li><b>Price index.</b> Flats that sold twice show how prices moved between the two dates. We fitted a smoothed
+      quarterly index from those pairs and used it to move every past sale to a common price level.</li>
+  <li><b>Comparable history.</b> For each flat we took the index-adjusted prices of earlier sales of the same flat,
+      the same building (and same bedroom count), the same floor plan on other floors (units 305, 405, 505... sit
+      above each other and usually share a layout), the same mesh block, the same suburb and bedroom count, and the
+      eight nearest other buildings with sales.
+      Training rows only see sales before their own date, so the model learns exactly what it can use on 31 August.</li>
+  <li><b>Flat details.</b> Floor (from the unit number), position in the building, bedrooms, bathrooms, parking,
+      building size, strata lot area, distance to the harbour and to Town Hall, homes and people in the mesh block.</li>
+  <li><b>Light and view.</b> A flat's height is its floor &times; 3.1 m. We count the taller buildings within 100 m,
+      how far the tallest rises above the flat, and the taller buildings within 250 m in a 60&deg; cone towards the
+      nearest point of the harbour.</li>
+  <li><b>Model.</b> LightGBM with a median (L1) loss on log prices, so it targets percentage error, which is what the
+      within-10% score rewards. Recent sales count more (four-year half-life). We train three copies with
+      different random seeds and average them, which steadies the estimate.</li>
+</ol>
+{{chart_importance}}
+{{chart_index}}
+<p><b>The clever step: finding the missing sales.</b> The supplied sales were a subset of the NSW Valuer
+General's public records. Matching the Valuer General's unit sales to addresses added 34,375 sales (42% of what
+the final model learned from), mostly earlier sales in the same building with the same bedroom count, the
+input the model relies on most. Reading only files released by 31 August keeps it inside the rules.</p>
+
+<h2>What remains uncertain?</h2>
+<ul>
+  <li>Bedrooms are blank for most addresses, and those that exist come from the last advert, which may be dated after 31 August.</li>
+  <li>The model does not see condition, renovation or the direction a flat faces: units in a building usually share
+      one map point. Our light-and-view counts use one height per building, and OpenStreetMap has heights for under
+      half of buildings; it is also today's map, so a tower finished after an old sale still counts for that sale.</li>
+  <li>Strata lot area is only known for flats the Valuer General recorded an area for, and may include a car space
+      or storage cage on the same lot.</li>
+  <li>{{no_bld_sentence}}</li>
+  <li><b>Cheap flats, and small flats high up in towers.</b> Under $600,000 only 36% of estimates were within
+    10% (44 sales), against 81% between $600,000 and $800,000 (100 sales). Some of the worst misses were small
+    flats high up in city towers, such as a one-bedroom on level 18 in Haymarket that sold for $570,000 and we
+    valued at $809,000: the model gives them the building's and the floor's premium without knowing they are
+    small. When we miss, we usually guess too high (70 of 91 misses).</li>
+</ul>
+
+<footer>
+  Data &copy; Microburbs; estimates are automated and indicative only. Addresses from G-NAF &copy; Geoscape Australia.
+  Mesh blocks &copy; Australian Bureau of Statistics (CC BY 4.0).
+  Property sales: NSW Valuer General bulk property sales information (CC BY-NC-ND 4.0), used for non-commercial
+  analysis and not republished. Buildings and stations &copy; OpenStreetMap contributors (ODbL).
+</footer>
+</main>
+</body>
+</html>
