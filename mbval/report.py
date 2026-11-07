@@ -99,6 +99,33 @@ def chart_index(index: dict) -> str:
     return _img(fig, "City of Sydney flat price index from repeat sales")
 
 
+def chart_floor(fp: dict) -> str:
+    floors = sorted(fp["curve"], key=int)
+    pct = [fp["curve"][f][0] for f in floors]
+    xs = [int(f) for f in floors]
+    fig, ax = plt.subplots(figsize=(6.4, 2.8))
+    ax.bar(xs, pct, color=[BLUE if p >= 0 else GREY for p in pct], width=0.7)
+    line = np.array([min(xs), max(xs)])
+    ax.plot(line, np.expm1(np.log1p(fp["per_floor_pct"]) * line), color=INK, lw=1,
+            label=f"{fp['per_floor_pct']:+.1%} per floor")
+    ax.axhline(0, color=MUTED, lw=0.8)
+    ax.yaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0))
+    ax.set_xlabel("Floors above (+) or below (-) the building's average")
+    ax.set_ylabel("Price vs building average")
+    ax.legend(frameon=False, loc="upper left")
+    ax.grid(axis="y", color=GRID)
+    ax.set_axisbelow(True)
+    return _img(fig, "Flats on higher floors sell for more than others in the same building")
+
+
+def ablation_table(rows: list) -> str:
+    head = "<tr><th>Inputs</th><th>Within 10%</th><th>Typical miss</th><th>R squared</th></tr>"
+    body = "".join(
+        f"<tr><td>{html.escape(r['step'])}</td><td>{r['within_10_share']:.1%} ({r['within_10_n']:,} of {r['n']:,})</td>"
+        f"<td>{_money(r['median_abs_error'])}</td><td>{r['r2']:.3f}</td></tr>" for r in rows)
+    return f"<table>{head}{body}</table>"
+
+
 def chart_importance(importance: list) -> str:
     top = importance[:12][::-1]
     fig, ax = plt.subplots(figsize=(6.4, 3.4))
@@ -136,9 +163,29 @@ def build_values() -> dict:
             chart_importance=chart_importance(m["importance"]),
             bands_table="".join(f"<tr><td>{html.escape(k)}</td><td>{n:,}</td></tr>" for k, n in model["bands"].items()),
         )
+        fp = m.get("floor_premium")
+        if fp:
+            v.update(floor_premium_pct=f"{fp['per_floor_pct']:+.1%}", floor_premium_n=f"{fp['n_sales']:,}",
+                     floor_premium_buildings=f"{fp['n_buildings']:,}", chart_floor=chart_floor(fp))
+        full = m.get("model_all_prices")
+        if full:
+            v.update(all_prices_share=_pct(full["within_10_share"]), all_prices_n=f"{full['n']:,}",
+                     all_prices_r2=f"{full['r2']:.3f}")
+        ext = m.get("external") or {}
+        v.update(vg_sales_added=f"{ext.get('vg_sales_added', 0):,}", vg_area_n=f"{ext.get('vg_area_n', 0):,}",
+                 osm_height_share=_pct(ext.get("osm_height_share")))
+        nb = seg.get("building_no_sales")
+        if nb and nb["n"]:
+            v.update(no_bld_share=_pct(nb["within_10_share"]), no_bld_n=f"{nb['n']:,}")
         preds_file = config.OUT_DIR / "backtest_predictions.csv"
         if preds_file.exists():
             v["chart_scatter"] = chart_scatter(pd.read_csv(preds_file))
+    afile = config.OUT_DIR / "ablation.json"
+    if afile.exists():
+        v["ablation_table"] = ablation_table(json.loads(afile.read_text()))
+    n = config.PRIVATE_TEST_N
+    v["published_benchmarks"] = "; ".join(
+        f"{html.escape(name)}: {k} of {n} ({k / n:.0%})" for name, k in config.PUBLISHED_BENCHMARKS.items())
     if pfile.exists():
         p = json.loads(pfile.read_text())
         v.update(n_flats=f"{p['n_flats']:,}", value_median=_money(p["value_median"]),

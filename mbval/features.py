@@ -1,14 +1,17 @@
 """Feature building.
 
-Two kinds of features:
+Three kinds of features:
 - static: what the flats file (and optional API extras) says about the flat and its building;
 - history: index-adjusted prices of earlier sales of the same flat, the same building,
   the same building and bedroom count, the same mesh block, and the same suburb and bedroom
   count. They only use sales strictly before the query date, so a training row (a past sale)
   sees exactly what a prediction on 31 August would see: the past, never its own price.
+- nearby buildings: index-adjusted prices in the closest other buildings that had sales
+  before the query's month, which helps flats whose own building has little or no history.
 """
 import numpy as np
 import pandas as pd
+from scipy.spatial import cKDTree
 
 import config
 
@@ -35,6 +38,22 @@ HISTORY_GROUPS = [
     ("mb", ["mb"]),
     ("subbed", ["suburb", "bed_key"]),
 ]
+NEARBY_BUILDINGS = 8
+
+# Cumulative steps for `run.py ablation`: each adds the history features with these prefixes.
+ABLATION_STEPS = [
+    ("Flat details only", []),
+    ("+ the flat's own earlier sales", ["own_"]),
+    ("+ earlier sales in the same building", ["bld_", "bldbed_"]),
+    ("+ mesh block and suburb sales", ["mb_", "subbed_"]),
+    ("+ nearby buildings", ["nbr_"]),
+    ("+ mesh block homes and people (supplied)", ["blk_"]),
+    ("+ Microburbs API property and dwelling type", ["api_"]),
+    ("+ OpenStreetMap buildings and stations", ["osm_"]),
+    ("+ Valuer General lot area", ["vg_"]),
+]
+GROUP_PREFIXES = tuple(p for _, prefixes in ABLATION_STEPS for p in prefixes)
+EXTRA_PREFIXES = ("api_", "blk_", "osm_", "vg_")  # static inputs from outside the flats file
 
 
 def haversine_km(lat, lon, lat0, lon0):
@@ -68,7 +87,7 @@ def static_features(flats: pd.DataFrame, api_extras: pd.DataFrame | None = None)
 
 
 def static_feature_names(static: pd.DataFrame) -> list[str]:
-    extras = [c for c in static.columns if c.startswith("api_")]
+    extras = [c for c in static.columns if c.startswith(EXTRA_PREFIXES) and c != "api_floor"]
     return STATIC_NUMERIC + STATIC_CATEGORICAL + extras
 
 
@@ -99,6 +118,48 @@ def history_features(query: pd.DataFrame, hist: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _km_xy(lat, lon) -> np.ndarray:
+    """Flat-earth km coordinates; accurate enough across one council area."""
+    lat, lon = np.asarray(lat, dtype=float), np.asarray(lon, dtype=float)
+    return np.column_stack([lon * 111.32 * np.cos(np.radians(-33.88)), lat * 110.57])
+
+
+def neighbour_features(q: pd.DataFrame, hist: pd.DataFrame, static: pd.DataFrame,
+                       k: int = NEARBY_BUILDINGS) -> pd.DataFrame:
+    """For each query row: sales-weighted mean lp_norm of the k nearest *other* buildings with
+    sales before the first day of the query's month, their mean distance and their sale count.
+    Month-level cutoffs keep this time-honest while building one search tree per month."""
+    out = np.full((len(q), 3), np.nan)
+    bld_xy = static.groupby("building")[["latitude", "longitude"]].mean().dropna()
+    bld_xy = pd.DataFrame(_km_xy(bld_xy["latitude"], bld_xy["longitude"]), index=bld_xy.index, columns=["x", "y"])
+    q_xy = _km_xy(q["latitude"], q["longitude"])
+    q_ok = ~np.isnan(q_xy).any(axis=1)
+    q_bld = q["building"].to_numpy()
+    h = hist[["sale_date", "building", "lp_norm"]].sort_values("sale_date")
+    h_dates = h["sale_date"].to_numpy()
+
+    months = q["query_date"].dt.to_period("M")
+    for month, rows in pd.Series(np.arange(len(q))).groupby(months.to_numpy()).groups.items():
+        rows = np.asarray(rows)
+        rows = rows[q_ok[rows]]
+        cutoff = np.datetime64(month.start_time, "ns")
+        prior = h.iloc[: np.searchsorted(h_dates, cutoff, side="left")]
+        agg = prior.groupby("building")["lp_norm"].agg(["sum", "count"]).join(bld_xy, how="inner")
+        if len(agg) < 2 or len(rows) == 0:
+            continue
+        kk = min(k + 1, len(agg))
+        dist, idx = cKDTree(agg[["x", "y"]].to_numpy()).query(q_xy[rows], k=kk)
+        dist, idx = dist.reshape(len(rows), kk), idx.reshape(len(rows), kk)
+        use = agg.index.to_numpy()[idx] != q_bld[rows, None]   # drop the flat's own building
+        use &= np.cumsum(use, axis=1) <= k
+        sums, counts = agg["sum"].to_numpy()[idx] * use, agg["count"].to_numpy()[idx] * use
+        with np.errstate(invalid="ignore", divide="ignore"):
+            out[rows, 0] = sums.sum(1) / counts.sum(1)
+            out[rows, 1] = (dist * use).sum(1) / use.sum(1)
+        out[rows, 2] = counts.sum(1)
+    return pd.DataFrame(out, columns=["nbr_mean", "nbr_dist_km", "nbr_n"])
+
+
 def feature_frame(query: pd.DataFrame, hist: pd.DataFrame, static: pd.DataFrame) -> pd.DataFrame:
     """query: gnaf_id + query_date. hist: past sales with gnaf_id, sale_date, lp_norm.
     Returns the model's feature matrix, row-aligned with query."""
@@ -109,10 +170,13 @@ def feature_frame(query: pd.DataFrame, hist: pd.DataFrame, static: pd.DataFrame)
     hist = hist[["gnaf_id", "sale_date", "lp_norm"]].copy()
     hist["sale_date"] = hist["sale_date"].astype("datetime64[ns]")
     hist = hist.join(static[["building", "bed_key", "mb", "suburb"]], on="gnaf_id", how="inner")
-    x = pd.concat([q[names], history_features(q, hist)], axis=1)
+    x = pd.concat([q[names], history_features(q, hist), neighbour_features(q, hist, static)], axis=1)
     x["t_years"] = q["query_date"].dt.year + q["query_date"].dt.dayofyear / 366
-    for col in STATIC_CATEGORICAL:
-        x[col] = x[col].astype("category")
+    for col in STATIC_CATEGORICAL + [c for c in names if c not in STATIC_CATEGORICAL
+                                     and not pd.api.types.is_numeric_dtype(x[c])]:
+        x[col] = x[col].fillna("unknown").astype(str).astype("category")
+    if config.DROP_FEATURE_PREFIXES:
+        x = x[[c for c in x.columns if not c.startswith(tuple(config.DROP_FEATURE_PREFIXES))]]
     return x
 
 

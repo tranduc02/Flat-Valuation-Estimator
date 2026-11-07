@@ -1,6 +1,7 @@
 """Checks around the pipeline: API smoke test, data inspection, API extras, submission validation."""
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pandas as pd
@@ -70,25 +71,39 @@ def inspect(data_dir: Path):
 
 
 def fetch_api_extras(data_dir: Path):
-    """Per-flat floor/level from /v1/suburbs/{suburb}/properties, saved to cache/api_properties.csv.
-    Floors don't change over time, so this is safe for a 31 August valuation."""
+    """Per-address property and dwelling type (and floor/level, if the API ever adds them) from
+    /v1/suburbs/{suburb}/properties, saved to cache/api_properties.csv.
+
+    We keep only the type fields: they describe what the place is (apartment, older-style unit,
+    commercial suite...) and don't change over time. We deliberately skip the API's bedrooms,
+    bathrooms and car spaces, which carry no as-at date (the task page warns against them)."""
     flats = data.load_flats(data_dir)
     mb = Microburbs(cache_dir=config.CACHE_DIR)
     rows = []
-    for suburb in sorted(flats["suburb"].unique()):
+    # The API names suburbs exactly as the flats file does ("Waterloo (NSW)"). Suburbs outside its
+    # 29-suburb area (e.g. Newtown, Paddington) answer 403 and are skipped.
+
+    def one(suburb):
         try:
             got = mb.get_all_pages(f"/v1/suburbs/{suburb}/properties", page_size=200)
+            print(f"  {suburb}: {len(got):,} properties", flush=True)
+            return got
         except MicroburbsError as e:
-            print(f"  {suburb}: {e}")
-            continue
-        print(f"  {suburb}: {len(got):,} properties")
-        rows.extend(got)
+            print(f"  {suburb}: {str(e)[:90]}", flush=True)
+            return []
+
+    with ThreadPoolExecutor(max_workers=4) as pool:  # the client's throttle keeps the total under 8 rps
+        for got in pool.map(one, sorted(flats["suburb"].unique())):
+            rows.extend(got)
     if not rows:
         print("no rows fetched")
         return
     df = pd.DataFrame(rows)
     id_col = next(c for c in ("gnaf_pid", "gnaf_id", "id") if c in df)
     out = pd.DataFrame({"gnaf_id": df[id_col].astype(str)})
+    for col in ("property_type", "dwelling_type"):
+        if col in df:
+            out[f"api_{col}"] = df[col].fillna("unknown").astype(str).str.lower()
     for col in ("floor", "level"):
         if col in df:
             out[f"api_{col}"] = pd.to_numeric(df[col].astype(str).str.extract(r"(-?\d+)")[0], errors="coerce")

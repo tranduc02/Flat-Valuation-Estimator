@@ -15,7 +15,7 @@ def summarize(actual, pred) -> dict:
     ok = ~missing
     abs_err = np.abs(pred[ok] - actual[ok])
     ss_res = np.sum((actual[ok] - pred[ok]) ** 2)
-    ss_tot = np.sum((actual[ok] - actual[ok].mean()) ** 2)
+    ss_tot = np.sum((actual[ok] - actual[ok].mean()) ** 2) if ok.any() else 0.0
 
     eps = 1e-9
     rel_ok = rel[ok]
@@ -35,6 +35,13 @@ def summarize(actual, pred) -> dict:
     }
 
 
+def margin(summary: dict) -> float:
+    """95% margin of error on the within-10% share. With ~200 test sales it is about +/-7
+    points, so a change smaller than that may just be noise."""
+    p, n = summary["within_10_share"], summary["n"]
+    return 1.96 * np.sqrt(p * (1 - p) / n) if n else float("nan")
+
+
 def fmt(summary: dict) -> str:
-    return (f"n={summary['n']:,}  within 10%: {summary['within_10_n']:,} ({summary['within_10_share']:.1%})  "
-            f"median abs error ${summary['median_abs_error']:,.0f}  R2={summary['r2']}")
+    return (f"n={summary['n']:,}  within 10%: {summary['within_10_n']:,} ({summary['within_10_share']:.1%} "
+            f"+/-{margin(summary):.1%})  median abs error ${summary['median_abs_error']:,.0f}  R2={summary['r2']}")

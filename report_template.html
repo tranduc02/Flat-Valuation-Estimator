@@ -45,7 +45,10 @@ On {{n_test}} later sales we held out, {{within_share}} of our estimates were wi
 
 <h2>What we found along the way</h2>
 <ul>
-  <li><span class="todo">TODO finding with a number, e.g. the floor premium, the building effect, the harbour premium.</span></li>
+  <li><b>{{floor_premium_pct}} a floor.</b> Compared only with flats in the same building, each floor up sold for
+      about {{floor_premium_pct}} more, after adjusting every sale to the same price level
+      ({{floor_premium_n}} sales in {{floor_premium_buildings}} buildings).
+      {{chart_floor}}</li>
   <li>A flat's own earlier sale, moved to today's prices with a repeat-sales index, was a strong guide:
       flats that had sold before were within 10% {{sold_before_share}} of the time ({{sold_before_n}} sales),
       against {{never_sold_share}} for flats with no earlier sale ({{never_sold_n}} sales).</li>
@@ -55,38 +58,63 @@ On {{n_test}} later sales we held out, {{within_share}} of our estimates were wi
 <h2>How accurate is it on later sales?</h2>
 <p>We built the estimate only from sales dated before <b>{{split_date}}</b>, then valued flats as at that date and
 compared with <b>{{n_test}}</b> flat sales under $1.2 million from {{split_date}} to {{test_end}}, which the model never saw.
-Missing predictions: <b>{{n_missing}}</b>. R squared: <b>{{r2}}</b>.</p>
+Missing predictions: <b>{{n_missing}}</b>. R squared: <b>{{r2}}</b>.
+Without the $1.2 million cap ({{all_prices_n}} later sales), {{all_prices_share}} were within 10% and R squared was {{all_prices_r2}}.</p>
 {{chart_compare}}
 <p>The two grey bars are the simple benchmarks from the task page, rebuilt on the same split:
 a suburb median for each bedroom count ({{base_median_share}} within 10%) and each flat's last sale adjusted for
-city-wide price changes ({{base_last_share}}).</p>
+city-wide price changes ({{base_last_share}}). For reference, the task page gives these results on the judges'
+private set: {{published_benchmarks}}.</p>
 {{chart_bands}}
 <table><tr><th>Miss</th><th>Later sales</th></tr>{{bands_table}}</table>
 {{chart_scatter}}
 
+<h2>What did each input add?</h2>
+<p>The same backtest, refitting the model as each group of inputs is added. With a test set this size, differences
+under about 5 percentage points may be noise.</p>
+{{ablation_table}}
+<p><span class="todo">TODO one sentence on what moved the score most, and anything that did not help.</span></p>
+
 <h2>What data did we use?</h2>
 <ul>
   <li>The supplied <code>flats-city-of-sydney.csv</code> ({{n_flats}} addresses: location, mesh block, unit number,
-      bedrooms where known, flats in the building) and <code>flat-sales-city-of-sydney.csv</code>
-      ({{n_train_final}} sales used for the final model).</li>
-  <li><span class="todo">TODO any API data (e.g. floor from /v1/suburbs/{suburb}/properties) or open data you added.</span></li>
-  <li>Only information dated by 31 August 2026. Sales after that date were removed before anything else ran.</li>
+      bedrooms where known, flats in the building), <code>flat-sales-city-of-sydney.csv</code>, and the supplied
+      homes and people per mesh block (2026 figures are Microburbs estimates, not Census results).</li>
+  <li><b>NSW Valuer General bulk sales.</b> The supplied sales turned out to be a subset of the state's sales
+      records (same dates, same prices). Matching the Valuer General's unit sales to addresses added
+      {{vg_sales_added}} sales the supplied file doesn't have, and the strata lot area (flat size) for
+      {{vg_area_n}} flats. The final model learned from {{n_train_final}} sales in all.</li>
+  <li><b>OpenStreetMap buildings and stations.</b> Building heights (where mapped, otherwise our own buildings' top
+      floor) give a building height for {{osm_height_share}} of flats, so we can count taller buildings next
+      to each flat and between it and the harbour. Stations give distance to train, metro and light rail.</li>
+  <li><b>Microburbs API.</b> Property type and dwelling type (apartment, unit, studio, commercial...) for almost
+      every address from <code>/v1/suburbs/{suburb}/properties</code>, and the floor where it gives one. Floor
+      otherwise comes from the unit number (315 is floor 3); where both exist they agreed on all 19,570 flats.
+      We skipped the API's bedrooms and parking, which carry no as-at date.</li>
+  <li>Only information dated by 31 August 2026. Sales after that date were removed before anything else ran, and
+      only Valuer General files released by 31 August were read (later ones hold the judges' test period).
+      In the backtest a Valuer General sale only counts once it had been registered.
+      We did not use current bedrooms and parking from <code>/basics/all</code>, which carry no as-at date.</li>
 </ul>
 
 <h2>How did we estimate value?</h2>
 <div class="flow">
   <div>Repeat sales</div><i>&rarr;</i><div>City price index</div><i>&rarr;</i>
-  <div>Earlier sales of the flat, building, mesh block</div><i>&rarr;</i><div>Gradient-boosted model</div><i>&rarr;</i>
+  <div>Earlier sales of the flat, building, nearby buildings</div><i>&rarr;</i><div>Gradient-boosted model</div><i>&rarr;</i>
   <div>Value on 31 Aug 2026</div>
 </div>
 <ol>
   <li><b>Price index.</b> Flats that sold twice show how prices moved between the two dates. We fitted a smoothed
       quarterly index from those pairs and used it to move every past sale to a common price level.</li>
   <li><b>Comparable history.</b> For each flat we took the index-adjusted prices of earlier sales of the same flat,
-      the same building (and same bedroom count), the same mesh block, and the same suburb and bedroom count.
+      the same building (and same bedroom count), the same mesh block, the same suburb and bedroom count, and the
+      eight nearest other buildings with sales.
       Training rows only see sales before their own date, so the model learns exactly what it can use on 31 August.</li>
   <li><b>Flat details.</b> Floor (from the unit number), position in the building, bedrooms, bathrooms, parking,
-      building size, distance to the harbour and to Town Hall.</li>
+      building size, strata lot area, distance to the harbour and to Town Hall, homes and people in the mesh block.</li>
+  <li><b>Light and view.</b> A flat's height is its floor &times; 3.1 m. We count the taller buildings within 100 m,
+      how far the tallest rises above the flat, and the taller buildings within 250 m in a 60&deg; cone towards the
+      nearest point of the harbour.</li>
   <li><b>Model.</b> LightGBM with a median (L1) loss on log prices, so it targets percentage error, which is what the
       within-10% score rewards. Recent sales count more (four-year half-life).</li>
 </ol>
@@ -97,13 +125,20 @@ city-wide price changes ({{base_last_share}}).</p>
 <h2>What remains uncertain?</h2>
 <ul>
   <li>Bedrooms are blank for most addresses, and those that exist come from the last advert, which may be dated after 31 August.</li>
-  <li>The model does not see condition, renovation, aspect or view directly.</li>
+  <li>The model does not see condition, renovation or the direction a flat faces: units in a building usually share
+      one map point. Our light-and-view counts use one height per building, and OpenStreetMap has heights for under
+      half of buildings; it is also today's map, so a tower finished after an old sale still counts for that sale.</li>
+  <li>Strata lot area is only known for flats the Valuer General recorded an area for, and may include a car space
+      or storage cage on the same lot.</li>
+  <li>Flats in buildings with no earlier sales are harder: within 10% {{no_bld_share}} of the time ({{no_bld_n}} sales).</li>
   <li><span class="todo">TODO where it misses most (e.g. large or penthouse flats, small blocks with no sales).</span></li>
 </ul>
 
 <footer>
   Data &copy; Microburbs; estimates are automated and indicative only. Addresses from G-NAF &copy; Geoscape Australia.
-  Mesh blocks &copy; Australian Bureau of Statistics (CC BY 4.0). <span class="todo">TODO credit any other source.</span>
+  Mesh blocks &copy; Australian Bureau of Statistics (CC BY 4.0).
+  Property sales: NSW Valuer General bulk property sales information (CC BY-NC-ND 4.0), used for non-commercial
+  analysis and not republished. Buildings and stations &copy; OpenStreetMap contributors (ODbL).
 </footer>
 </main>
 </body>

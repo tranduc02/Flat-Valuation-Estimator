@@ -3,7 +3,7 @@ from datetime import date
 from pathlib import Path
 
 # Exactly as registered. The CSV name is derived from it ("Data Wranglers" -> data-wranglers).
-TEAM_NAME = "can't think of a name"
+TEAM_NAME = "can't find a name"
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"    # put the supplied CSVs here (gitignored)
@@ -13,6 +13,7 @@ OUT_DIR = ROOT / "out"      # backtest predictions, metrics, charts (gitignored)
 FLATS_FILE = "flats-city-of-sydney.csv"
 SALES_FILE = "flat-sales-city-of-sydney.csv"
 REPEAT_SALES_FILE = "repeat-sales-city-of-sydney.csv"
+BLOCKS_FILE = "blocks-homes-and-people-2021-2026.csv"  # supplied: homes and people per mesh block
 
 # We estimate what each flat would have sold for on this date, using only information dated by it.
 VALUATION_DATE = date(2026, 8, 31)
@@ -25,6 +26,14 @@ SPLIT_DATE = date(2026, 7, 1)
 SCORED_PRICE_CAP = 1_200_000
 WITHIN_PCT = 0.10
 
+# Task page: how the simple methods did on the judges' private set (227 flat sales, 1 Sep - 4 Nov 2026).
+PRIVATE_TEST_N = 227
+PUBLISHED_BENCHMARKS = {
+    "Microburbs' own valuation (covers 13% of addresses)": 34,
+    "suburb median by bedrooms": 86,
+    "last sale, index-adjusted": 109,
+}
+
 # Sales file columns. None = auto-detect; run `python run.py inspect` and set these if it guesses wrong.
 SALES_ID_COL = "gnaf_id"
 SALES_DATE_COL = None
@@ -35,6 +44,15 @@ TRAIN_SINCE = date(2010, 1, 1)
 MIN_PRICE = 100_000          # below this is mostly car spaces, storage and part-shares
 MAX_PRICE = 10_000_000
 RECENCY_HALF_LIFE_YEARS = 4  # older sales count less in training
+
+# Input groups to leave out, by feature-name prefix: "own_", "bld_", "bldbed_", "mb_", "subbed_", "nbr_",
+# "osm_" (OpenStreetMap buildings/stations), "vg_" (Valuer General lot area).
+# Run `python run.py ablation` first and drop a group only if adding it made the backtest worse.
+DROP_FEATURE_PREFIXES = ()
+
+# Add matched NSW Valuer General sales (data/external/vg_sales.csv, from `run.py build-vg`) to the
+# supplied sales history. The backtest is still scored on supplied sales only.
+USE_VG_SALES = True
 
 # Price index: period length for the repeat-sales index ("Q" = quarterly, "M" = monthly).
 INDEX_FREQ = "Q"
