@@ -60,6 +60,7 @@ On {{n_test}} later sales we held out, {{within_share}} of our estimates were wi
 compared with <b>{{n_test}}</b> flat sales under $1.2 million from {{split_date}} to {{test_end}}, which the model never saw.
 Missing predictions: <b>{{n_missing}}</b>. R squared: <b>{{r2}}</b>.
 Without the $1.2 million cap ({{all_prices_n}} later sales), {{all_prices_share}} were within 10% and R squared was {{all_prices_r2}}.</p>
+<p>{{calibration_sentence}}</p>
 {{chart_compare}}
 <p>The two grey bars are the simple benchmarks from the task page, rebuilt on the same split:
 a suburb median for each bedroom count ({{base_median_share}} within 10%) and each flat's last sale adjusted for
@@ -130,7 +131,7 @@ under about 5 percentage points may be noise.</p>
       half of buildings; it is also today's map, so a tower finished after an old sale still counts for that sale.</li>
   <li>Strata lot area is only known for flats the Valuer General recorded an area for, and may include a car space
       or storage cage on the same lot.</li>
-  <li>Flats in buildings with no earlier sales are harder: within 10% {{no_bld_share}} of the time ({{no_bld_n}} sales).</li>
+  <li>{{no_bld_sentence}}</li>
   <li><span class="todo">TODO where it misses most (e.g. large or penthouse flats, small blocks with no sales).</span></li>
 </ul>
 

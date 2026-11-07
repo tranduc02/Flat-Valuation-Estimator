@@ -123,16 +123,17 @@ def value_features(hist: pd.DataFrame, idx: pd.Series, as_of, static: pd.DataFra
     return features.feature_frame(q, hist, static), level
 
 
-def predict(fitted: Fitted, static: pd.DataFrame, gnaf_ids) -> np.ndarray:
-    """Estimated price at fitted.as_of for each gnaf_id."""
+def predict(fitted: Fitted, static: pd.DataFrame, gnaf_ids, adjust: bool = True) -> np.ndarray:
+    """Estimated price at fitted.as_of for each gnaf_id (times PRICE_ADJUST unless adjust=False)."""
     x, level = value_features(fitted.hist, fitted.index, fitted.as_of, static, gnaf_ids)
-    return np.exp(fitted.model.predict(x) + level)
+    return np.exp(fitted.model.predict(x) + level) * (config.PRICE_ADJUST if adjust else 1.0)
 
 
-def test_sales(sales: pd.DataFrame, static: pd.DataFrame, cap: bool = True) -> pd.DataFrame:
-    """Sales from SPLIT_DATE to VALUATION_DATE, filtered like the judges' set: flats under $1.2m.
-    cap=False keeps every price, like the full-set result the judges also publish."""
-    split, end = pd.Timestamp(config.SPLIT_DATE), pd.Timestamp(config.VALUATION_DATE)
+def test_sales(sales: pd.DataFrame, static: pd.DataFrame, cap: bool = True, start=None, end=None) -> pd.DataFrame:
+    """Sales from SPLIT_DATE to VALUATION_DATE (or start..end), filtered like the judges' set: flats
+    under $1.2m. cap=False keeps every price, like the full-set result the judges also publish."""
+    split = pd.Timestamp(start or config.SPLIT_DATE)
+    end = pd.Timestamp(end or config.VALUATION_DATE)
     top = config.SCORED_PRICE_CAP - 1 if cap else config.MAX_PRICE
     sales = sales[sales["source"] == "supplied"]  # score on the supplied file only, like the judges
     test = sales[(sales["sale_date"] >= split) & (sales["sale_date"] <= end)
@@ -223,6 +224,7 @@ def backtest(data_dir: Path) -> dict:
     result = {
         "split_date": str(split.date()),
         "test_end": str(config.VALUATION_DATE),
+        "price_adjust": config.PRICE_ADJUST,
         "n_train": fitted.n_train,
         "n_test": len(test),
         "model": metrics.summarize(test["price"], test["pred"]),
@@ -302,6 +304,43 @@ def ablation(data_dir: Path) -> list[dict]:
     config.OUT_DIR.mkdir(exist_ok=True)
     (config.OUT_DIR / "ablation.json").write_text(json.dumps(rows, indent=2))
     return rows
+
+
+def calibration(data_dir: Path) -> dict:
+    """Do estimates run high or low? Measured only on earlier windows (train before each split, test
+    the next three months), then checked on the saved July-August backtest, which played no part."""
+    flats, sales, static = load_inputs(data_dir)
+    rows = []
+    print("\ncalibration windows (median estimate / sale price, flats under $1.2m):")
+    for split in config.CALIBRATION_SPLITS:
+        start = pd.Timestamp(split)
+        end = start + pd.DateOffset(months=3) - pd.Timedelta(days=1)
+        fitted = fit(sales, static, start)
+        test = test_sales(sales, static, start=start, end=end)
+        pred = predict(fitted, static, test["gnaf_id"], adjust=False)
+        s = metrics.summarize(test["price"], pred)
+        ratio = float(np.exp(np.median(np.log(pred / test["price"].to_numpy()))))
+        rows.append({"split": str(start.date()), "n": len(test), "median_ratio": round(ratio, 4),
+                     "within_10_share": s["within_10_share"]})
+        print(f"  {start.date()} to {end.date()}: n={len(test)}  median ratio {ratio:.3f}  "
+              f"within 10% {s['within_10_share']:.1%}")
+    factor = float(np.exp(-np.mean([np.log(r["median_ratio"]) for r in rows])))
+    result = {"windows": rows, "suggested_factor": round(factor, 4)}
+
+    bt_file, m_file = config.OUT_DIR / "backtest_predictions.csv", config.OUT_DIR / "backtest_metrics.json"
+    if bt_file.exists() and m_file.exists():
+        bt = pd.read_csv(bt_file)
+        raw = bt["pred"] / json.loads(m_file.read_text()).get("price_adjust", 1.0)
+        before, after = metrics.summarize(bt["price"], raw), metrics.summarize(bt["price"], raw * factor)
+        result["check"] = {"without": before["within_10_share"], "with": after["within_10_share"],
+                           "median_abs_error_without": before["median_abs_error"],
+                           "median_abs_error_with": after["median_abs_error"], "n": before["n"]}
+        print(f"\nsuggested factor {factor:.3f}. Check on the July-August backtest (n={before['n']}): "
+              f"within 10% {before['within_10_share']:.1%} -> {after['within_10_share']:.1%}, "
+              f"median miss ${before['median_abs_error']:,.0f} -> ${after['median_abs_error']:,.0f}")
+    config.OUT_DIR.mkdir(exist_ok=True)
+    (config.OUT_DIR / "calibration.json").write_text(json.dumps(result, indent=2))
+    return result
 
 
 def team_slug(name: str) -> str:

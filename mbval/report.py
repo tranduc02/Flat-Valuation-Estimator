@@ -174,12 +174,38 @@ def build_values() -> dict:
         ext = m.get("external") or {}
         v.update(vg_sales_added=f"{ext.get('vg_sales_added', 0):,}", vg_area_n=f"{ext.get('vg_area_n', 0):,}",
                  osm_height_share=_pct(ext.get("osm_height_share")))
-        nb = seg.get("building_no_sales")
+        nb, ns = seg.get("building_no_sales"), seg.get("never_sold_before")
         if nb and nb["n"]:
-            v.update(no_bld_share=_pct(nb["within_10_share"]), no_bld_n=f"{nb['n']:,}")
+            v["no_bld_sentence"] = (f"Flats in buildings with no earlier sales are harder: within 10% "
+                                    f"{_pct(nb['within_10_share'])} of the time ({nb['n']:,} sales).")
+        else:
+            v["no_bld_sentence"] = (
+                "Every test flat's building had earlier sales once the Valuer General records were added, so we "
+                "could not test flats in buildings that have never traded; expect them to be harder."
+                + (f" Flats that had never sold themselves were within 10% {_pct(ns['within_10_share'])} of the "
+                   f"time ({ns['n']:,} sales)." if ns and ns["n"] else ""))
         preds_file = config.OUT_DIR / "backtest_predictions.csv"
         if preds_file.exists():
             v["chart_scatter"] = chart_scatter(pd.read_csv(preds_file))
+    v["calibration_sentence"] = ""
+    cfile = config.OUT_DIR / "calibration.json"
+    if cfile.exists():
+        c = json.loads(cfile.read_text())
+        ratios = ", ".join(f"{(w['median_ratio'] - 1):+.1%}" for w in c["windows"])
+        shares = ", ".join(f"{_pct(w['within_10_share'])} of {w['n']:,}" for w in c["windows"])
+        text = (f"Three more tests: we repeated the exercise from 1 October 2025, 1 January and 1 April 2026, "
+                f"each time training only on earlier sales and valuing the next three months of flat sales "
+                f"under $1.2 million. Within 10%: {shares}. The typical estimate was off by {ratios}.")
+        if config.PRICE_ADJUST != 1.0:
+            text += f" So every estimate is multiplied by {config.PRICE_ADJUST:.3f}"
+            chk = c.get("check")
+            if chk:
+                text += (f"; on the July-August test, which played no part in choosing it, that moved the share "
+                         f"within 10% from {_pct(chk['without'])} to {_pct(chk['with'])}")
+            text += "."
+        else:
+            text += " That was not consistent enough to correct for, so estimates are not rescaled."
+        v["calibration_sentence"] = text
     afile = config.OUT_DIR / "ablation.json"
     if afile.exists():
         v["ablation_table"] = ablation_table(json.loads(afile.read_text()))

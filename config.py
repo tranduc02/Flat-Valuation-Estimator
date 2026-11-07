@@ -22,6 +22,11 @@ VALUATION_DATE = date(2026, 8, 31)
 # Two months mirrors the real gap (31 Aug -> private sales 1 Sep to 4 Nov).
 SPLIT_DATE = date(2026, 7, 1)
 
+# Multiply every estimate by this. Set from `python run.py calibrate`, which measures whether estimates
+# run high or low on earlier three-month windows (never on the July-August backtest it is checked on).
+PRICE_ADJUST = 1.0
+CALIBRATION_SPLITS = (date(2025, 10, 1), date(2026, 1, 1), date(2026, 4, 1))
+
 # Judges score confirmed flats sold under this price, by share within 10%.
 SCORED_PRICE_CAP = 1_200_000
 WITHIN_PCT = 0.10
